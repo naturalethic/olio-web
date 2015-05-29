@@ -1,0 +1,23 @@
+{
+  "name": "olio-web",
+  "version": "0.0.1",
+  "description": "olio web",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/naturalethic/olio-web"
+  },
+  "dependencies": {
+    "axios": "^0.5.4",
+    "browserify": "^10.2.1",
+    "co": "^4.5.4",
+    "inflection": "^1.7.1",
+    "jade": "^1.10.0",
+    "mime": "^1.3.4",
+    "nib": "^1.1.0",
+    "node-notifier": "^4.2.1",
+    "prelude-ls": "^1.1.2",
+    "regenerator": "^0.8.27",
+    "stylus": "^0.51.1",
+    "watchify": "^3.2.1"
+  }
+}
