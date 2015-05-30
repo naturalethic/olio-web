@@ -2,15 +2,14 @@ require! \jade
 require! \inflection
 require! \regenerator
 require! \browserify
+require! \browserify-css
 require! \watchify
 require! \node-notifier
 require! \stylus
 require! \nib
 
-_names = null
-read-view-names = ->
-  return _names if _names
-  _names := glob.sync 'web/**/*.+(jade|ls|styl)'
+read-view-names = Func.memoize ->
+  names = glob.sync 'web/**/*.+(jade|ls|styl)'
   |> map -> it.replace(/^web\//, '').replace(/\.(jade|ls|styl)$/, '').replace(/\//g, '-')
   |> unique
   |> map ->
@@ -19,10 +18,10 @@ read-view-names = ->
       return (parts.slice(0, parts.length - 2) ++ [ last parts ]).join '-'
     it
   # XXX: Always execute html first, if it exists, for setting up initializations and globals
-  if \html in _names
-    _names.splice _names.index-of \html
-    _names := <[ html ]> ++ _names
-  _names
+  if \html in names
+    names.splice names.index-of \html
+    names := <[ html ]> ++ names
+  names
 
 view-path-for-name = (name, ext) ->
   parts = name.split('-')
@@ -41,8 +40,8 @@ stitch-styles = ->
     return if !path = view-path-for-name it, 'styl'
     source.push(fs.read-file-sync(path).to-string!)
   stylus(source.join '\n').use(nib()).import("nib").render (_, it) ->
-    info 'Writing    -> public/index.css'
-    fs.write-file-sync \public/index.css, it
+    info 'Writing    -> tmp/index.css'
+    fs.write-file-sync \tmp/index.css, it
 
 stitch-templates = ->
   script = ["""
@@ -66,16 +65,14 @@ stitch-scripts = ->
     window <<< require 'olio-web'
     olio.template = require './template'
   """]
-  script ++= [
-    ((fs.exists-sync 'web/html.ls') and (fs.read-file-sync 'web/html.ls').to-string!) or ''
-    # "require './index.css'"
-  ]
+  if fs.exists-sync 'web/html.ls'
+    script.push (fs.read-file-sync 'web/html.ls').to-string!
   for key, val of require-dir \api
     for k, v of val
       script.push "olio.api._add '#key', '#k'"
-  script = script.join '\n'
+  script.push "require './index.css'"
   script = [
-    livescript.compile script, { header: false, bare: true }
+    livescript.compile script.join('\n'), { header: false, bare: true }
   ]
   # validate = require '../../olio-api/validate'
   # f = validate.to-string!replace(/^function\*/, 'function').replace(/yield\sthis._validator/, 'this._validator')
@@ -99,13 +96,13 @@ setup-bundler = ->
     detect-globals: false
     cache: {}
     package-cache: {}
-  # bundler.transform browserify-css,
-  #   auto-inject-options: { verbose: false }
-  #   process-relative-url: (url) ->
-  #     path = /([^\#\?]*)/.exec(url).1
-  #     base = fs.path.basename path
-  #     exec "cp #path public/#base"
-  #     "#base"
+  bundler.transform browserify-css,
+    auto-inject-options: { verbose: false }
+    process-relative-url: (url) ->
+      path = /([^\#\?]*)/.exec(url).1
+      base = fs.path.basename path
+      exec "cp #path public/#base"
+      "#base"
 
 bundle = ->
   info 'Browserify -> public/index.js'
@@ -121,6 +118,7 @@ build = (what) ->*
     time := Date.now!
     exec "mkdir -p tmp"
     exec "mkdir -p public"
+    exec "ln -fs ../node_modules/olio-web/node_modules tmp"
     # switch what
     # | otherwise =>
       # stitch-templates!
