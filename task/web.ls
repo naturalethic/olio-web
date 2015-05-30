@@ -52,7 +52,7 @@ stitch-styles = ->
         source.push incl
     styles.push promisify-all stylus(styl).use(nib()).import("nib")
   promise.map styles, ->
-    source.push it.render-async!
+    it.render-async!then -> source.push it
   .then ->
     info 'Writing    -> public/index.css'
     fs.write-file-sync \public/index.css, source.join('\n')
