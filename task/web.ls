@@ -7,6 +7,7 @@ require! \watchify
 require! \node-notifier
 require! \stylus
 require! \nib
+require! \checksum
 
 read-view-names = Func.memoize ->
   names = glob.sync 'web/**/*.+(jade|ls|styl)'
@@ -35,13 +36,26 @@ view-path-for-name = (name, ext) ->
   first (paths |> filter -> fs.exists-sync it)
 
 stitch-styles = ->
+  re-include = /^\/\/\s+INCLUDE\s+(.*)$/gm
+  re-url     = /url\("([^":]+)"\)/gm
   source = []
-  read-view-names! |> each ->
+  styles = []
+  for it in read-view-names!
     return if !path = view-path-for-name it, 'styl'
-    source.push(fs.read-file-sync(path).to-string!)
-  stylus(source.join '\n').use(nib()).import("nib").render (_, it) ->
-    info 'Writing    -> tmp/index.css'
-    fs.write-file-sync \tmp/index.css, it
+    styl = fs.read-file-sync(path).to-string!
+    while m = re-include.exec styl
+      if fs.exists-sync m.1
+        incl = fs.read-file-sync m.1 .to-string!
+        while n = re-url.exec incl
+          path = n.1.split(/[\#\?]/).0
+          copy-if-changed "#{fs.path.dirname(m.1)}/#path", "public/#{fs.path.dirname path}/#{fs.path.basename path}"
+        source.push incl
+    styles.push promisify-all stylus(styl).use(nib()).import("nib")
+  promise.map styles, ->
+    source.push it.render-async!
+  .then ->
+    info 'Writing    -> public/index.css'
+    fs.write-file-sync \public/index.css, source.join('\n')
 
 stitch-templates = ->
   script = ["""
@@ -59,7 +73,6 @@ stitch-templates = ->
   info 'Writing    -> public/index.html'
   fs.write-file-sync \public/index.html, components.html.html
 
-
 stitch-scripts = ->
   script = ["""
     window <<< require 'olio-web'
@@ -70,7 +83,6 @@ stitch-scripts = ->
   for key, val of require-dir \api
     for k, v of val
       script.push "olio.api._add '#key', '#k'"
-  script.push "require './index.css'"
   script = [
     livescript.compile script.join('\n'), { header: false, bare: true }
   ]
@@ -82,59 +94,74 @@ stitch-scripts = ->
   info 'Writing    -> tmp/index.js'
   fs.write-file-sync \tmp/index.js, regenerator.compile(script.join('\n'), include-runtime: true).code
 
-
 time = null
 bundler = null
 
-setup-bundler = ->
+copy = (source, target) ->
+  info "Copy       -> #target"
+  exec "mkdir -p #{fs.path.dirname target}"
+  exec "cp #source #target"
+
+copy-if-changed = (source, target) ->
+  return copy source, target if !fs.exists-sync target
+  checksum.file source, (_, s1) ->
+    checksum.file target, (_, s2) ->
+      copy source, target if s1 != s2
+
+copy-static = ->
   glob.sync 'web/**/*.!(ls|jade|styl)'
   |> each ->
-    path = "public/#{/web\/(.*)/.exec(it).1}"
-    exec "mkdir -p #{fs.path.dirname path}"
-    exec "cp #it #path"
+    copy-if-changed it, "public/#{/web\/(.*)/.exec(it).1}"
+
+setup-bundler = ->
   bundler := watchify browserify <[ ./tmp/index.js ]>,
     detect-globals: false
     cache: {}
     package-cache: {}
-  bundler.transform browserify-css,
-    auto-inject-options: { verbose: false }
-    process-relative-url: (url) ->
-      path = /([^\#\?]*)/.exec(url).1
-      base = fs.path.basename path
-      exec "cp #path public/#base"
-      "#base"
+  bundler.on \update, ->
+    bundle!
+
+done = ->
+  node-notifier.notify title: (inflection.capitalize olio.config.name), message: "Site Rebuilt: #{(Date.now! - time) / 1000}s"
+  info "--- Done in #{(Date.now! - time) / 1000} seconds ---"
+  process.exit 0 if olio.option.exit
 
 bundle = ->
   info 'Browserify -> public/index.js'
   bundler.bundle!
   .pipe fs.create-write-stream 'public/index.js'
-  .on 'finish', ->
-    info "--- Done in #{(Date.now! - time) / 1000} seconds ---"
-    node-notifier.notify title: (inflection.capitalize olio.config.name), message: "Site Rebuilt: #{(Date.now! - time) / 1000}s"
-    process.exit 0 if olio.option.exit
+  .on 'finish', done
 
-build = (what) ->*
+build = (what) ->
   try
     time := Date.now!
-    exec "mkdir -p tmp"
-    exec "mkdir -p public"
-    exec "ln -fs ../node_modules/olio-web/node_modules tmp"
-    # switch what
-    # | otherwise =>
-      # stitch-templates!
-    stitch-styles!
-    stitch-templates!
-    stitch-scripts!
-    bundle!
+    switch what
+    | \all =>
+      copy-static!
+      stitch-templates!
+      stitch-styles!
+      stitch-scripts!
+    | \jade =>
+      stitch-templates!
+      stitch-scripts!
+    | \styl =>
+      stitch-styles!
+      done!
+    | \ls =>
+      stitch-scripts!
+    | otherwise =>
+      copy-static!
   catch e
     info e
 
 export web = ->*
+  exec "mkdir -p tmp"
+  exec "mkdir -p public"
+  exec "ln -fs ../node_modules/olio-web/node_modules tmp"
   setup-bundler!
   watcher.watch <[ olio.ls host.ls web ]>, persistent: true, ignore-initial: true .on 'all', (event, path) ->
     info "Change detected in '#path'..."
-    if /styl$/.test path
-      co build \styles
-    else
-      co build
-  co build
+    build (/\.(\w+)$/.exec path).1
+  build \all
+  bundle!
+
