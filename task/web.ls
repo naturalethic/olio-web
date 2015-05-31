@@ -9,6 +9,8 @@ require! \stylus
 require! \nib
 require! \checksum
 
+export watch = "#__dirname/web.ls"
+
 read-view-names = Func.memoize ->
   names = glob.sync 'web/**/*.+(jade|ls|styl)'
   |> map -> it.replace(/^web\//, '').replace(/\.(jade|ls|styl)$/, '').replace(/\//g, '-')
@@ -18,10 +20,10 @@ read-view-names = Func.memoize ->
     if parts.length > 1 and parts[parts.length - 2] in [(last parts), (inflection.singularize last parts)]
       return (parts.slice(0, parts.length - 2) ++ [ last parts ]).join '-'
     it
-  # XXX: Always execute html first, if it exists, for setting up initializations and globals
+  # XXX: Move html to the front for initialization type work
   if \html in names
-    names.splice names.index-of \html
-    names := <[ html ]> ++ names
+    names.splice (names.index-of \html), 1
+    names = <[ html ]> ++ names
   names
 
 view-path-for-name = (name, ext) ->
@@ -38,6 +40,9 @@ view-path-for-name = (name, ext) ->
 stitch-styles = ->
   re-include = /^\/\/\s+INCLUDE\s+(.*)$/gm
   re-url     = /url\("([^":]+)"\)/gm
+  includes = [
+    "#__dirname/../node_modules/semantic-ui-css/semantic.css"
+  ]
   source = []
   styles = []
   for it in read-view-names!
@@ -45,16 +50,18 @@ stitch-styles = ->
     styl = fs.read-file-sync(path).to-string!
     while m = re-include.exec styl
       if fs.exists-sync m.1
-        incl = fs.read-file-sync m.1 .to-string!
-        while n = re-url.exec incl
-          path = n.1.split(/[\#\?]/).0
-          copy-if-changed "#{fs.path.dirname(m.1)}/#path", "public/#{fs.path.dirname path}/#{fs.path.basename path}"
-        source.push incl
-    styles.push promisify-all stylus(styl).use(nib()).import("nib")
-  promise.map styles, ->
-    it.render-async!then -> source.push it
+        includes.push m.1
+    styles.push styl
+  for ipath in includes
+    incl = fs.read-file-sync ipath .to-string!
+    while n = re-url.exec incl
+      path = n.1.split(/[\#\?]/).0
+      copy-if-changed "#{fs.path.dirname(ipath)}/#path", "public/#{fs.path.dirname path}/#{fs.path.basename path}"
+    source.push incl
+  (promisify-all stylus(styles.join('\n')).use(nib()).import("nib")).render-async!
   .then ->
     info 'Writing    -> public/index.css'
+    source.push it
     fs.write-file-sync \public/index.css, source.join('\n')
 
 stitch-templates = ->
@@ -69,7 +76,7 @@ stitch-templates = ->
     continue if name is \html
     script.push "export #name = '#{components[name].html.replace(/'/g, "\\'")}'"
   info 'Writing    -> tmp/template.js'
-  fs.write-file-sync \tmp/template.js, livescript.compile(script.join('\n'))
+  fs.write-file-sync \tmp/template.js, livescript.compile(script.join('\n'), { -header })
   info 'Writing    -> public/index.html'
   fs.write-file-sync \public/index.html, components.html.html
 
@@ -84,7 +91,7 @@ stitch-scripts = ->
     for k, v of val
       script.push "olio.api._add '#key', '#k'"
   script = [
-    livescript.compile script.join('\n'), { header: false, bare: true }
+    livescript.compile script.join('\n'), { -header }
   ]
   # validate = require '../../olio-api/validate'
   # f = validate.to-string!replace(/^function\*/, 'function').replace(/yield\sthis._validator/, 'this._validator')

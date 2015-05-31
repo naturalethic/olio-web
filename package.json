@@ -18,7 +18,9 @@
     "nib": "^1.1.0",
     "node-notifier": "^4.2.1",
     "prelude-ls": "^1.1.2",
+    "reactive": "^1.2.0",
     "regenerator": "^0.8.27",
+    "semantic-ui-css": "^1.12.3",
     "stylus": "^0.51.1",
     "watchify": "^3.2.1"
   }
