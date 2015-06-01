@@ -69,16 +69,23 @@ stitch-templates = ->
   """]
   components = {}
   for name in read-view-names!
-    continue if not path = view-path-for-name name, \jade
+    markup-path = view-path-for-name name, \jade
+    script-path = view-path-for-name name, \ls
+    continue if not (markup-path or script-path)
     components[name] =
-      path: path
-      html: jade.render-file path, { +pretty }
+      markup: (markup-path and jade.render-file markup-path, { +pretty }) or ''
+      script: (script-path and fs.read-file-sync(script-path).to-string!) or 'null'
     continue if name is \html
-    script.push "export #name = '#{components[name].html.replace(/'/g, "\\'")}'"
+    script.push """
+      export #name =
+        markup: '#{components[name].markup.replace(/'/g, "\\'")}'
+        script: #{components[name].script.replace(/\n/g, "\n  ")}
+    """
   info 'Writing    -> tmp/template.js'
+  info script.join('\n')
   fs.write-file-sync \tmp/template.js, livescript.compile(script.join('\n'), { -header })
   info 'Writing    -> public/index.html'
-  fs.write-file-sync \public/index.html, components.html.html
+  fs.write-file-sync \public/index.html, components.html.markup
 
 stitch-scripts = ->
   script = ["""
@@ -101,9 +108,6 @@ stitch-scripts = ->
   info 'Writing    -> tmp/index.js'
   fs.write-file-sync \tmp/index.js, regenerator.compile(script.join('\n'), include-runtime: true).code
 
-time = null
-bundler = null
-
 copy = (source, target) ->
   info "Copy       -> #target"
   exec "mkdir -p #{fs.path.dirname target}"
@@ -121,27 +125,30 @@ copy-static = ->
     copy-if-changed it, "public/#{/web\/(.*)/.exec(it).1}"
 
 setup-bundler = ->
-  bundler := watchify browserify <[ ./tmp/index.js ]>,
+  build.bundler = watchify browserify <[ ./tmp/index.js ]>,
     detect-globals: false
     cache: {}
     package-cache: {}
-  bundler.on \update, ->
+  build.bundler.on \update, ->
+    info "Change detected in '#{it.0}'..."
+    build.time ?= Date.now!
     bundle!
 
 done = ->
-  node-notifier.notify title: (inflection.capitalize olio.config.name), message: "Site Rebuilt: #{(Date.now! - time) / 1000}s"
-  info "--- Done in #{(Date.now! - time) / 1000} seconds ---"
+  node-notifier.notify title: (inflection.capitalize olio.config.name), message: "Site Rebuilt: #{(Date.now! - build.time) / 1000}s"
+  info "--- Done in #{(Date.now! - build.time) / 1000} seconds ---"
+  build.time = null
   process.exit 0 if olio.option.exit
 
 bundle = ->
   info 'Browserify -> public/index.js'
-  bundler.bundle!
+  build.bundler.bundle!
   .pipe fs.create-write-stream 'public/index.js'
   .on 'finish', done
 
 build = (what) ->
   try
-    time := Date.now!
+    build.time = Date.now!
     switch what
     | \all =>
       copy-static!
@@ -151,11 +158,12 @@ build = (what) ->
     | \jade =>
       stitch-templates!
       stitch-scripts!
+    | \ls =>
+      stitch-templates!
+      stitch-scripts!
     | \styl =>
       stitch-styles!
       done!
-    | \ls =>
-      stitch-scripts!
     | otherwise =>
       copy-static!
   catch e
@@ -171,4 +179,8 @@ export web = ->*
     build (/\.(\w+)$/.exec path).1
   build \all
   bundle!
+
+
+
+
 
