@@ -30,7 +30,28 @@ olio.api =
     else
       olio.api[module][name] = func
 
+olio.state = {}
+
+olio.go = (route, state) ->
+  history.push-state state, '', route
+
+window.onpopstate = ->
+  info \STATE, it
+
+bindings =
+  route: (el, val) ->
+    $ el .hide! if val != olio.state.route
+
 $ ->
+  olio.state.route = location.pathname
+  history.replace-state null, '', location.pathname
   for name, template of olio.template
-    $ ".#name" |> each ->
-      $ it .append template
+    $ ".#name:not(.olio-initialized)" |> each (el) ->
+      attrs = ''
+      el.attributes |> each ->
+        if it.name is \class
+          it.value += ' olio-initialized'
+        it.value = it.value.replace /"/g, "'"
+        attrs += " #{it.name}=\"#{it.value}\""
+      view = reactive "<div#attrs>#template</div>", olio.state, bindings: bindings
+      $ el .replace-with view.el

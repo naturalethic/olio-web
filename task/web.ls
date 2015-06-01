@@ -11,7 +11,7 @@ require! \checksum
 
 export watch = "#__dirname/web.ls"
 
-read-view-names = Func.memoize ->
+read-view-names = ->
   names = glob.sync 'web/**/*.+(jade|ls|styl)'
   |> map -> it.replace(/^web\//, '').replace(/\.(jade|ls|styl)$/, '').replace(/\//g, '-')
   |> unique
